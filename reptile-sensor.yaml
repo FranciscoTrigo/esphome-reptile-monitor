@@ -1,0 +1,178 @@
+esphome:
+  name: watechen-sensor
+  friendly_name: watechen-sensor
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+captive_portal:
+
+external_components:
+  - source: github://pr#6209
+    components: [ waveshare_epaper ]
+    
+text_sensor:
+  - platform: homeassistant
+    entity_id: sensor.time_date
+    id: ha_time
+    name: "HA Time"
+
+# Example configuration entry
+# Configure I2C bus (required for BME280)
+i2c:
+  sda: 2
+  scl: 15
+  scan: true
+  id: bus_a
+
+sensor:
+  - platform: bme280_i2c
+    temperature:
+      name: "Watechen Temperature"
+      id: watechen_temp
+    pressure:
+      name: "Watechen Pressure"
+      id: watechen_pressure
+    humidity:
+      name: "Watechen Humidity"
+      id: watechen_hum
+
+
+globals:
+  - id: last_valid_temp
+    type: float
+    restore_value: yes
+    initial_value: '20.0'
+  - id: last_valid_hum
+    type: float
+    restore_value: yes
+    initial_value: '50.0'
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_title
+    size: 24
+  - file: "gfonts://Roboto"
+    id: font_large
+    size: 60
+  - file: "gfonts://Roboto"
+    id: font_medium
+    size: 28
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 18
+  - file: "gfonts://Roboto"
+    id: font_tiny
+    size: 16
+
+# --- E-Paper Display ---
+spi:
+  clk_pin: 18
+  mosi_pin: 23
+
+display:
+  - platform: waveshare_epaper
+    cs_pin: 5
+    dc_pin: 17
+    busy_pin: 4
+    reset_pin: 16
+    model: 4.20in-v2
+    update_interval: 65s
+    lambda: |-
+      // 4.2" display is 400x300 pixels
+      int w = it.get_width();
+      int h = it.get_height();
+      
+      // Get current values
+      float temp = id(watechen_temp).state;
+      float hum = id(watechen_hum).state;
+      
+      // Check if values are valid, if not use last valid values
+      bool temp_valid = !isnan(temp) && temp > -50 && temp < 100;
+      bool hum_valid = !isnan(hum) && hum >= 0 && hum <= 100;
+      
+      if (temp_valid) {
+        id(last_valid_temp) = temp;
+      } else {
+        temp = id(last_valid_temp);
+      }
+      
+      if (hum_valid) {
+        id(last_valid_hum) = hum;
+      } else {
+        hum = id(last_valid_hum);
+      }
+      
+      // Determine temperature status
+      std::string temp_status = "Ideal";
+      if (temp >= 21 && temp <= 26.6) {
+        temp_status = "Ideal";
+      } else if (temp > 26.6) {
+        temp_status = "Muy Caliente";
+      } else if (temp < 21) {
+        temp_status = "Muy Frio";
+      }
+      
+      // Determine humidity status
+      std::string hum_status = "Ideal";
+      if (hum >= 60 && hum <= 80) {
+        hum_status = "Ideal";
+      } else if (hum > 80) {
+        hum_status = "Muy Humedo";
+      } else if (hum < 60) {
+        hum_status = "Muy Seco";
+      }
+      
+      // Draw title at top
+      it.printf(w/2, 10, id(font_title), TextAlign::TOP_CENTER, "MONITOR DE WATECHEN");
+      
+      // Draw horizontal line under title
+      it.line(20, 45, w-20, 45);
+      
+      // Temperature Section (Left half)
+      int temp_x = w / 4;
+      it.printf(temp_x, 80, id(font_medium), TextAlign::TOP_CENTER, "Temperatura");
+      
+      // Temperature value
+      it.printf(temp_x, 130, id(font_large), TextAlign::TOP_CENTER, "%.1f°", temp);
+      
+      // Show sensor status if reading is stale
+      if (!temp_valid) {
+        it.printf(temp_x, 195, id(font_tiny), TextAlign::TOP_CENTER, "(Ultimo conocido)");
+      }
+      
+      // Temperature status text
+      it.printf(temp_x, 210, id(font_small), TextAlign::TOP_CENTER, "%s", temp_status.c_str());
+      
+      // Vertical divider between sections
+      it.line(w/2, 60, w/2, 240);
+      
+      // Humidity Section (Right half)
+      int hum_x = (w * 3) / 4;
+      it.printf(hum_x, 80, id(font_medium), TextAlign::TOP_CENTER, "Humedad");
+      
+      // Humidity value
+      it.printf(hum_x, 130, id(font_large), TextAlign::TOP_CENTER, "%.0f%%", hum);
+      
+      // Show sensor status if reading is stale
+      if (!hum_valid) {
+        it.printf(hum_x, 195, id(font_tiny), TextAlign::TOP_CENTER, "(Ultimo conocido)");
+      }
+      
+      // Humidity status text
+      it.printf(hum_x, 210, id(font_small), TextAlign::TOP_CENTER, "%s", hum_status.c_str());
+      
+      // Draw footer line
+      it.line(20, 260, w-20, 260);
+      
+      // Footer with timestamp
+      it.printf(w/2, 270, id(font_tiny), TextAlign::TOP_CENTER, "%s", id(ha_time).state.c_str());
